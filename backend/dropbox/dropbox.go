@@ -1743,6 +1743,21 @@ func (f *Fs) changeNotifyRunner(ctx context.Context, notifyFunc func(string, fs.
 		time.Sleep(time.Duration(res.Backoff) * time.Second)
 	}
 
+	return f.changesAfter(ctx, notifyFunc, cursor)
+}
+
+// ChangesStartToken returns where the change log stands now, for ChangesSince. Added for Syncative: it asks for changes once per sync instead of through ChangeNotify's timer.
+func (f *Fs) ChangesStartToken(ctx context.Context) (string, error) {
+	return f.changeNotifyCursor(ctx)
+}
+
+// ChangesSince calls notifyFunc for every change after cursor, as ChangeNotify does, and returns the cursor after them. Unlike ChangeNotify it doesn't wait for a change (no long poll). Added for Syncative.
+func (f *Fs) ChangesSince(ctx context.Context, notifyFunc func(string, fs.EntryType), cursor string) (string, error) {
+	return f.changesAfter(ctx, notifyFunc, cursor)
+}
+
+// changesAfter reports the changes after cursor and returns the cursor after them.
+func (f *Fs) changesAfter(ctx context.Context, notifyFunc func(string, fs.EntryType), cursor string) (newCursor string, err error) {
 	for {
 		var changeList *files.ListFolderResult
 
