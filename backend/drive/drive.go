@@ -3187,6 +3187,16 @@ func (f *Fs) ChangeNotify(ctx context.Context, notifyFunc func(string, fs.EntryT
 		}
 	}()
 }
+// ChangesStartToken returns where the change log stands now, for ChangesSince. Added for Syncative: it asks for changes once per sync instead of through ChangeNotify's timer.
+func (f *Fs) ChangesStartToken(ctx context.Context) (string, error) {
+	return f.changeNotifyStartPageToken(ctx)
+}
+
+// ChangesSince calls notifyFunc for every change after token, as ChangeNotify does, and returns the token after them; "" when the log gave none. Like ChangeNotify it reports only changes in folders the directory cache knows. Added for Syncative.
+func (f *Fs) ChangesSince(ctx context.Context, notifyFunc func(string, fs.EntryType), token string) (string, error) {
+	return f.changeNotifyRunner(ctx, notifyFunc, token)
+}
+
 func (f *Fs) changeNotifyStartPageToken(ctx context.Context) (pageToken string, err error) {
 	var startPageToken *drive.StartPageToken
 	err = f.pacer.Call(func() (bool, error) {
