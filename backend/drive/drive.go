@@ -3187,6 +3187,7 @@ func (f *Fs) ChangeNotify(ctx context.Context, notifyFunc func(string, fs.EntryT
 		}
 	}()
 }
+
 // ChangesStartToken returns where the change log stands now, for ChangesSince. Added for Syncative: it asks for changes once per sync instead of through ChangeNotify's timer.
 func (f *Fs) ChangesStartToken(ctx context.Context) (string, error) {
 	return f.changeNotifyStartPageToken(ctx)
@@ -3220,7 +3221,7 @@ func (f *Fs) changeNotifyRunner(ctx context.Context, notifyFunc func(string, fs.
 
 		err = f.pacer.Call(func() (bool, error) {
 			changesCall := f.svc.Changes.List(pageToken).
-				Fields("nextPageToken,newStartPageToken,changes(fileId,file(name,parents,mimeType))")
+				Fields("nextPageToken,newStartPageToken,changes(fileId,removed,file(name,parents,mimeType,trashed))")
 			if f.opt.ListChunk > 0 {
 				changesCall.PageSize(f.opt.ListChunk)
 			}
@@ -3246,6 +3247,8 @@ func (f *Fs) changeNotifyRunner(ctx context.Context, notifyFunc func(string, fs.
 			entryType fs.EntryType
 		}
 		var pathsToClear []entryType
+		// Folders that left the path the directory cache holds for them (moved, renamed, trashed or deleted); dropped from the cache after this page, so a lookup by that path no longer finds them by their old ID. Added for Syncative.
+		var movedDirs []string
 		for _, change := range changeList.Changes {
 			// find the previous path
 			if path, ok := f.dirCache.GetInv(change.FileId); ok {
@@ -3253,6 +3256,9 @@ func (f *Fs) changeNotifyRunner(ctx context.Context, notifyFunc func(string, fs.
 					pathsToClear = append(pathsToClear, entryType{path: path, entryType: fs.EntryObject})
 				} else {
 					pathsToClear = append(pathsToClear, entryType{path: path, entryType: fs.EntryDirectory})
+				}
+				if dirLeftPath(change, path, f.dirCache.GetInv, f.opt.Enc.ToStandardName) {
+					movedDirs = append(movedDirs, path)
 				}
 			}
 
@@ -3280,6 +3286,10 @@ func (f *Fs) changeNotifyRunner(ctx context.Context, notifyFunc func(string, fs.
 			}
 		}
 
+		for _, dir := range movedDirs {
+			f.dirCache.FlushDir(dir)
+		}
+
 		visitedPaths := make(map[string]struct{})
 		for _, entry := range pathsToClear {
 			if _, ok := visitedPaths[entry.path]; ok {
@@ -3298,6 +3308,19 @@ func (f *Fs) changeNotifyRunner(ctx context.Context, notifyFunc func(string, fs.
 			return
 		}
 	}
+}
+
+// dirLeftPath tells whether the folder cached at `cached` is no longer there after `change`: deleted, trashed, or now under another name or parent. Added for Syncative.
+func dirLeftPath(change *drive.Change, cached string, parentPath func(string) (string, bool), standardName func(string) string) bool {
+	if change.Removed || change.File == nil || change.File.Trashed {
+		return true
+	}
+	for _, parent := range change.File.Parents {
+		if parentDir, ok := parentPath(parent); ok && path.Join(parentDir, standardName(change.File.Name)) == cached {
+			return false
+		}
+	}
+	return true
 }
 
 // DirCacheFlush resets the directory cache - used in testing as an
