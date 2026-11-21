@@ -875,6 +875,8 @@ type Fs struct {
 	dirResourceKeys  *sync.Map                    // map directory ID to resource key
 	permissionsMu    *sync.Mutex                  // protect the below
 	permissions      map[string]*drive.Permission // map permission IDs to Permissions
+	tokenSource      *oauthutil.TokenSource       // the OAuth token's source; nil for service accounts and env auth
+	lastRenewal      *atomic.Int64                // when renewAfterRefusal last expired the token, in Unix nanoseconds; shared with copies of the Fs, as is the token source
 }
 
 type baseObject struct {
@@ -954,6 +956,9 @@ func (f *Fs) shouldRetry(ctx context.Context, err error) (bool, error) {
 			// All 5xx errors should be retried
 			return true, err
 		}
+		if gerr.Code == http.StatusUnauthorized && f.renewAfterRefusal() {
+			return true, err
+		}
 		if len(gerr.Errors) > 0 {
 			reason := gerr.Errors[0].Reason
 			if reason == "rateLimitExceeded" || reason == "userRateLimitExceeded" {
@@ -975,6 +980,30 @@ func (f *Fs) shouldRetry(ctx context.Context, err error) (bool, error) {
 		}
 	}
 	return false, err
+}
+
+// renewAfterRefusal reports whether a request Google refused with a 401 should be retried, and expires the access token so the retry renews it with the refresh token. Added for Syncative: Google sometimes refuses a token the clock still counts as valid, e.g. right after the machine woke from hibernation, and without a retry that one 401 reads as a dead sign-in. A refused grant still fails, in the renewal itself. Within a few seconds of a renewal the retry just sends the new token (requests refused together); after that and up to a minute the 401 stands, so a token Google keeps refusing ends in it.
+func (f *Fs) renewAfterRefusal() bool {
+	if f.tokenSource == nil || f.lastRenewal == nil {
+		return false
+	}
+	last := f.lastRenewal.Load()
+	since := time.Duration(time.Now().UnixNano() - last)
+	switch {
+	case last != 0 && since < 5*time.Second:
+		return true
+	case last != 0 && since < time.Minute:
+		return false
+	}
+	if !f.lastRenewal.CompareAndSwap(last, time.Now().UnixNano()) {
+		return true // another request renews it
+	}
+	if err := f.tokenSource.Expire(); err != nil {
+		fs.Debugf(f, "Couldn't expire the refused token: %v", err)
+		return false
+	}
+	fs.Infof(f, "Google refused the access token; renewing it and retrying")
+	return true
 }
 
 // parseParse parses a drive 'url'
@@ -1301,38 +1330,39 @@ func getServiceAccountClient(ctx context.Context, opt *Options, credentialsData 
 	return oauth2.NewClient(ctxWithSpecialClient, conf.TokenSource(ctxWithSpecialClient)), nil
 }
 
-func createOAuthClient(ctx context.Context, opt *Options, name string, m configmap.Mapper) (*http.Client, error) {
+func createOAuthClient(ctx context.Context, opt *Options, name string, m configmap.Mapper) (*http.Client, *oauthutil.TokenSource, error) {
 	var oAuthClient *http.Client
+	var ts *oauthutil.TokenSource
 	var err error
 
 	// try loading service account credentials from env variable, then from a file
 	if len(opt.ServiceAccountCredentials) == 0 && opt.ServiceAccountFile != "" {
 		loadedCreds, err := os.ReadFile(env.ShellExpand(opt.ServiceAccountFile))
 		if err != nil {
-			return nil, fmt.Errorf("error opening service account credentials file: %w", err)
+			return nil, nil, fmt.Errorf("error opening service account credentials file: %w", err)
 		}
 		opt.ServiceAccountCredentials = string(loadedCreds)
 	}
 	if opt.ServiceAccountCredentials != "" {
 		oAuthClient, err = getServiceAccountClient(ctx, opt, []byte(opt.ServiceAccountCredentials))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create oauth client from service account: %w", err)
+			return nil, nil, fmt.Errorf("failed to create oauth client from service account: %w", err)
 		}
 	} else if opt.EnvAuth {
 		scopes := driveScopes(opt.Scope)
 		oAuthClient, err = google.DefaultClient(ctx, scopes...)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create client from environment: %w", err)
+			return nil, nil, fmt.Errorf("failed to create client from environment: %w", err)
 		}
 	} else {
 		oauthutil.SharedClientIDWarning(name, "Google Drive", "https://rclone.org/drive/#making-your-own-client-id", m)
-		oAuthClient, _, err = oauthutil.NewClientWithBaseClient(ctx, name, m, driveConfig, getClient(ctx, opt))
+		oAuthClient, ts, err = oauthutil.NewClientWithBaseClient(ctx, name, m, driveConfig, getClient(ctx, opt))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create oauth client: %w", err)
+			return nil, nil, fmt.Errorf("failed to create oauth client: %w", err)
 		}
 	}
 
-	return oAuthClient, nil
+	return oAuthClient, ts, nil
 }
 
 func checkUploadChunkSize(cs fs.SizeSuffix) error {
@@ -1385,7 +1415,7 @@ func newFs(ctx context.Context, name, path string, m configmap.Mapper) (*Fs, err
 		return nil, fmt.Errorf("drive: chunk size: %w", err)
 	}
 
-	oAuthClient, err := createOAuthClient(ctx, opt, name, m)
+	oAuthClient, tokenSource, err := createOAuthClient(ctx, opt, name, m)
 	if err != nil {
 		return nil, fmt.Errorf("drive: failed when making oauth client: %w", err)
 	}
@@ -1409,6 +1439,8 @@ func newFs(ctx context.Context, name, path string, m configmap.Mapper) (*Fs, err
 		dirResourceKeys: new(sync.Map),
 		permissionsMu:   new(sync.Mutex),
 		permissions:     make(map[string]*drive.Permission),
+		tokenSource:     tokenSource,
+		lastRenewal:     new(atomic.Int64),
 	}
 	f.isTeamDrive = opt.TeamDriveID != ""
 	f.features = (&fs.Features{
@@ -3478,6 +3510,7 @@ func (f *Fs) changeServiceAccountFile(ctx context.Context, file string) (err err
 	oldSvc := f.svc
 	oldv2Svc := f.v2Svc
 	oldOAuthClient := f.client
+	oldTokenSource := f.tokenSource
 	oldFile := f.opt.ServiceAccountFile
 	oldCredentials := f.opt.ServiceAccountCredentials
 	defer func() {
@@ -3486,17 +3519,19 @@ func (f *Fs) changeServiceAccountFile(ctx context.Context, file string) (err err
 			f.svc = oldSvc
 			f.v2Svc = oldv2Svc
 			f.client = oldOAuthClient
+			f.tokenSource = oldTokenSource
 			f.opt.ServiceAccountFile = oldFile
 			f.opt.ServiceAccountCredentials = oldCredentials
 		}
 	}()
 	f.opt.ServiceAccountFile = file
 	f.opt.ServiceAccountCredentials = ""
-	oAuthClient, err := createOAuthClient(ctx, &f.opt, f.name, f.m)
+	oAuthClient, tokenSource, err := createOAuthClient(ctx, &f.opt, f.name, f.m)
 	if err != nil {
 		return fmt.Errorf("drive: failed when making oauth client: %w", err)
 	}
 	f.client = oAuthClient
+	f.tokenSource = tokenSource
 	f.svc, err = drive.NewService(context.Background(), option.WithHTTPClient(f.client))
 	if err != nil {
 		return fmt.Errorf("couldn't create Drive client: %w", err)
