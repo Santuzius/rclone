@@ -3293,6 +3293,26 @@ func (f *Fs) ChangesStartToken(ctx context.Context) (string, error) {
 	return f.changeNotifyStartPageToken(ctx)
 }
 
+// Untrash takes the file or folder with ID id out of the trash, back where it was; a folder's content trashed with it comes back too. Added for Syncative: its network drive restores what a file manager trashed on the mount.
+func (f *Fs) Untrash(ctx context.Context, id string) error {
+	update := drive.File{
+		ForceSendFields: []string{"Trashed"}, // necessary to set false value
+		Trashed:         false,
+	}
+	err := f.pacer.Call(func() (bool, error) {
+		_, err := f.svc.Files.Update(actualID(id), &update).
+			SupportsAllDrives(true).
+			Fields("trashed").
+			Context(ctx).Do()
+		return f.shouldRetry(ctx, err)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to restore: %w", err)
+	}
+	f.dirCache.Flush()
+	return nil
+}
+
 // ChangesSince calls notifyFunc for every change after token, as ChangeNotify does, and returns the token after them; "" when the log gave none. Like ChangeNotify it reports only changes in folders the directory cache knows. Added for Syncative.
 func (f *Fs) ChangesSince(ctx context.Context, notifyFunc func(string, fs.EntryType), token string) (string, error) {
 	return f.changeNotifyRunner(ctx, notifyFunc, token)
