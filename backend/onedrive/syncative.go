@@ -42,6 +42,10 @@ func (f *Fs) LatestItemEvent(ctx context.Context) (string, error) {
 // ItemChangesSince returns the items that changed after token, and the token after them. relist: the drive can't tell the changes since token (it expired); next is then where the log stands now.
 func (f *Fs) ItemChangesSince(ctx context.Context, token string) (next string, relist bool, items []ItemChange, err error) {
 	next, err = f.deltaSince(ctx, token, func(item *api.Item) {
+		// The log also lists the folders above a changed item; one that stands where it stood tells nothing.
+		if known, moved := f.forgetMovedFolder(item); known && !moved {
+			return
+		}
 		if change, ok := f.itemChange(item); ok {
 			items = append(items, change)
 		}
@@ -76,6 +80,7 @@ func (f *Fs) ChangesSince(ctx context.Context, notifyFunc func(string, fs.EntryT
 				}
 			}
 		}
+		f.forgetMovedFolder(item)
 	})
 	if errors.Is(err, errResyncRequired) {
 		return "", nil
@@ -144,6 +149,27 @@ func (f *Fs) itemChange(item *api.Item) (ItemChange, bool) {
 		IsDir:    item.GetFolder() != nil,
 		ModTime:  modTime,
 	}, true
+}
+
+// forgetMovedFolder drops a folder the directory cache knows from it, with everything below it, when the folder is gone or stands elsewhere now, so that a lookup by its old path no longer finds it. known: the cache knew item as a folder; moved: it no longer stands there.
+func (f *Fs) forgetMovedFolder(item *api.Item) (known, moved bool) {
+	old, known := f.dirCache.GetInv(f.itemID(item))
+	if !known {
+		return false, false
+	}
+	// The root of the remote is listed with every change below it, and is reached without a lookup.
+	if old == "" {
+		return true, false
+	}
+	if item.Deleted == nil && item.GetFolder() != nil {
+		if parent := item.GetParentReference(); parent != nil && parent.ID != "" {
+			if dir, ok := f.dirCache.GetInv(parent.GetID()); ok && path.Join(dir, f.opt.Enc.ToStandardName(item.GetName())) == old {
+				return true, false
+			}
+		}
+	}
+	f.dirCache.FlushDir(old)
+	return true, true
 }
 
 // itemID is the ID listings give item; a deleted item may come without the drive it was on, which is then this one.
