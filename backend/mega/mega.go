@@ -18,6 +18,7 @@ Improvements:
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -62,6 +63,23 @@ func init() {
 		Name:        "mega",
 		Description: "Mega",
 		NewFs:       NewFs,
+		MetadataInfo: &fs.MetadataInfo{
+			System: map[string]fs.MetadataHelp{
+				"mtime": {
+					Help:     "Time of last modification, from the file's fingerprint.",
+					Type:     "RFC 3339",
+					Example:  "2006-01-02T15:04:05Z07:00",
+					ReadOnly: true,
+				},
+				"mega-crc": {
+					Help:     "The CRCs of the file's fingerprint in hex, which tell whether two files hold the same content; rclone can't compute them while streaming a file, so they are metadata rather than a hash.",
+					Type:     "string",
+					Example:  "ea2aa9532ec37402b1e4d211837d62fe",
+					ReadOnly: true,
+				},
+			},
+			Help: "Files written by MEGA's apps or by this backend carry a fingerprint with their modification time and the CRCs of their content.",
+		},
 		Options: []fs.Option{{
 			Name:      "user",
 			Help:      "User name.",
@@ -243,6 +261,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	f.features = (&fs.Features{
 		DuplicateFiles:          true,
 		CanHaveEmptyDirectories: true,
+		ReadMetadata:            true,
 	}).Fill(ctx, f)
 
 	// cache *mega.Mega on username so we can reuse and share
@@ -723,8 +742,10 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 }
 
 // Precision return the precision of this Fs
+//
+// The fingerprint keeps the modification time in seconds.
 func (f *Fs) Precision() time.Duration {
-	return fs.ModTimeNotSupported
+	return time.Second
 }
 
 // Purge deletes all the files in the directory
@@ -1039,12 +1060,34 @@ func (o *Object) readMetaData(ctx context.Context) (err error) {
 // It attempts to read the objects mtime and if that isn't present the
 // LastModified returned in the http headers
 func (o *Object) ModTime(ctx context.Context) time.Time {
+	if t, ok := o.info.GetModTime(); ok {
+		return t
+	}
 	return o.info.GetTimeStamp()
 }
 
-// SetModTime sets the modification time of the local fs object
+// SetModTime sets the modification time in the file's fingerprint; a file without one, uploaded by an old client, can't keep a time.
 func (o *Object) SetModTime(ctx context.Context, modTime time.Time) error {
-	return fs.ErrorCantSetModTime
+	err := o.fs.pacer.Call(func() (bool, error) {
+		err := o.fs.srv.SetModTime(o.info, modTime)
+		return shouldRetry(ctx, err)
+	})
+	if err == mega.EARGS {
+		return fs.ErrorCantSetModTime
+	}
+	return err
+}
+
+// Metadata returns the modification time and the CRCs of the file's fingerprint, where it has one.
+func (o *Object) Metadata(ctx context.Context) (fs.Metadata, error) {
+	crc, mtime, ok := o.info.GetFingerprint()
+	if !ok {
+		return nil, nil
+	}
+	return fs.Metadata{
+		"mtime":    time.Unix(mtime, 0).UTC().Format(time.RFC3339),
+		"mega-crc": hex.EncodeToString(crc[:]),
+	}, nil
 }
 
 // Storable returns a boolean showing whether this object storable
@@ -1179,7 +1222,6 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	if size < 0 {
 		return errors.New("mega backend can't upload a file of unknown length")
 	}
-	//modTime := src.ModTime(ctx)
 	remote := o.Remote()
 
 	// Create the parent directory
@@ -1195,6 +1237,11 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	})
 	if err != nil {
 		return fmt.Errorf("upload file failed to create session: %w", err)
+	}
+	u.SetModTime(src.ModTime(ctx))
+	// An existing file gets the upload as its new version; MEGA keeps the old content as a version where the account keeps them.
+	if o.info != nil {
+		u.SetReplaces(o.info)
 	}
 
 	// Upload the chunks
@@ -1229,15 +1276,6 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	})
 	if err != nil {
 		return fmt.Errorf("failed to finish upload: %w", err)
-	}
-
-	// If the upload succeeded and the original object existed, then delete it
-	if o.info != nil {
-		err = o.fs.deleteNode(ctx, o.info)
-		if err != nil {
-			return fmt.Errorf("upload failed to remove old version: %w", err)
-		}
-		o.info = nil
 	}
 
 	// Wait for the server to confirm the new file
@@ -1278,4 +1316,5 @@ var (
 	_ fs.Abouter         = (*Fs)(nil)
 	_ fs.Object          = (*Object)(nil)
 	_ fs.IDer            = (*Object)(nil)
+	_ fs.Metadataer      = (*Object)(nil)
 )

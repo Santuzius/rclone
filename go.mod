@@ -284,3 +284,5 @@ require (
 	golang.org/x/mobile v0.0.0-20261011034528-197770444867
 	golang.org/x/term v0.47.0
 )
+
+replace github.com/t3rm1n4l/go-mega => github.com/Santuzius/go-mega v0.0.0-20261128155825-f83455e71f70

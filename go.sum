@@ -57,6 +57,8 @@ github.com/PuerkitoBio/goquery v1.12.0 h1:pAcL4g3WRXekcB9AU/y1mbKez2dbY2AajVhtkO
 github.com/PuerkitoBio/goquery v1.12.0/go.mod h1:802ej+gV2y7bbIhOIoPY5sT183ZW0YFofScC4q/hIpQ=
 github.com/STARRY-S/zip v0.2.3 h1:luE4dMvRPDOWQdeDdUxUoZkzUIpTccdKdhHHsQJ1fm4=
 github.com/STARRY-S/zip v0.2.3/go.mod h1:lqJ9JdeRipyOQJrYSOtpNAiaesFO6zVDsE8GIGFaoSk=
+github.com/Santuzius/go-mega v0.0.0-20261128155825-f83455e71f70 h1:1kezWPY3EJvAWOUEB12DMeaDe/fIJkyK8nttc2tUO0Q=
+github.com/Santuzius/go-mega v0.0.0-20261128155825-f83455e71f70/go.mod h1:BF/l2jNyK+2h/BJZ7VLMAz6m/IWjA2F67gTjV1C/+Bo=
 github.com/a1ex3/zstd-seekable-format-go/pkg v0.10.0 h1:iLDOF0rdGTrol/q8OfPIIs5kLD8XvA2q75o6Uq/tgak=
 github.com/a1ex3/zstd-seekable-format-go/pkg v0.10.0/go.mod h1:DrEWcQJjz7t5iF2duaiyhg4jyoF0kxOD6LtECNGkZ/Q=
 github.com/a8m/tree v0.0.0-20240104212747-2c8764a5f17e h1:KMVieI1/Ub++GYfnhyFPoGE3g5TUiG4srE3TMGr5nM4=
@@ -576,8 +578,6 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/t3rm1n4l/go-mega v0.0.0-20260717075258-c6acd6a5bd04 h1:s30A8dMuZ55lUOi5xUTh1hlfLqHpVBsRMfpk2iKCayk=
-github.com/t3rm1n4l/go-mega v0.0.0-20260717075258-c6acd6a5bd04/go.mod h1:BF/l2jNyK+2h/BJZ7VLMAz6m/IWjA2F67gTjV1C/+Bo=
 github.com/tailscale/depaware v0.0.0-20210622194025-720c4b409502/go.mod h1:p9lPsd+cx33L3H9nNoecRRxPssFKUwwI50I3pZ0yT+8=
 github.com/tinylib/msgp v1.6.4 h1:mOwYbyYDLPj35mkA2BjjYejgJk9BuHxDdvRnb6v2ZcQ=
 github.com/tinylib/msgp v1.6.4/go.mod h1:RSp0LW9oSxFut3KzESt5Voq4GVWyS+PSulT77roAqEA=
