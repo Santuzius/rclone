@@ -1572,6 +1572,10 @@ func (f *Fs) itemToDirEntry(ctx context.Context, dir string, info *api.Item) (en
 		fs.Debugf(info.Name, "OneNote file not shown in directory listing")
 		return nil, nil
 	}
+	if isPersonalVault(info) {
+		fs.Debugf(info.Name, "Personal Vault not shown in directory listing")
+		return nil, nil
+	}
 	remote := path.Join(dir, info.GetName())
 	folder := info.GetFolder()
 	if folder != nil {

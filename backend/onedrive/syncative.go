@@ -25,7 +25,7 @@ type ItemChange struct {
 	Name    string
 	IsDir   bool
 	ModTime time.Time
-	// Gone: deleted, or hidden from listings (a OneNote notebook), with everything below it.
+	// Gone: deleted, or hidden from listings (a OneNote notebook, the Personal Vault), with everything below it.
 	Gone bool
 }
 
@@ -130,7 +130,7 @@ func (f *Fs) deltaSince(ctx context.Context, token string, fn func(*api.Item)) (
 // itemChange is item as ItemChangesSince reports it; false for the drive's root.
 func (f *Fs) itemChange(item *api.Item) (ItemChange, bool) {
 	id := f.itemID(item)
-	if item.Deleted != nil || (!f.opt.ExposeOneNoteFiles && item.GetPackageType() == api.PackageTypeOneNote) {
+	if item.Deleted != nil || (!f.opt.ExposeOneNoteFiles && item.GetPackageType() == api.PackageTypeOneNote) || isPersonalVault(item) {
 		return ItemChange{ID: id, Gone: true}, true
 	}
 	parent := item.GetParentReference()
@@ -179,4 +179,14 @@ func (f *Fs) itemID(item *api.Item) string {
 		id = f.driveID + "#" + id
 	}
 	return id
+}
+
+// isPersonalVault tells whether item is the Personal Vault of a personal drive, which no API call lists: listing it fails with "invalidResourceId: ObjectHandle is Invalid" (rclone issue 8736), and its name follows the account's language ("Personal Vault", "Persönlicher Tresor"). It shows as a shortcut (remoteItem) to a folder of another drive in the account's own site; a shortcut to a folder someone shared points into their site.
+func isPersonalVault(item *api.Item) bool {
+	remote := item.RemoteItem
+	if remote == nil || remote.Folder == nil || remote.SharepointIDs == nil || item.ParentReference == nil {
+		return false
+	}
+	site := item.ParentReference.SiteID
+	return site != "" && remote.SharepointIDs.SiteID == site
 }

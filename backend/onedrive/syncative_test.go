@@ -1,6 +1,7 @@
 package onedrive
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -75,4 +76,28 @@ func TestMovedFoldersLeaveTheDirectoryCache(t *testing.T) {
 	assert.True(t, moved)
 	_, ok = f.dirCache.Get("Old")
 	assert.False(t, ok)
+}
+
+// The Personal Vault as a personal drive's root listing gives it, abridged.
+const personalVaultJSON = `{"id":"D1D1D1D1D1D1D1D1!s0001","name":"Persönlicher Tresor","size":0,
+"parentReference":{"driveType":"personal","driveId":"D1D1D1D1D1D1D1D1","id":"D1D1D1D1D1D1D1D1!s0000","path":"/drives/D1D1D1D1D1D1D1D1/root:","siteId":"00000000-0000-0000-0000-000000000001"},
+"remoteItem":{"id":"01VAULT","size":31638,"folder":{"childCount":3},"parentReference":{"driveType":"personal","driveId":"b!vault-drive"},"sharepointIds":{"siteId":"00000000-0000-0000-0000-000000000001"}}}`
+
+func TestPersonalVaultIsLeftOut(t *testing.T) {
+	var vault api.Item
+	assert.NoError(t, json.Unmarshal([]byte(personalVaultJSON), &vault))
+	assert.True(t, isPersonalVault(&vault))
+	f := &Fs{driveID: "D1D1D1D1D1D1D1D1"}
+	change, ok := f.itemChange(&vault)
+	assert.True(t, ok)
+	assert.True(t, change.Gone)
+
+	shared := vault
+	remote := *vault.RemoteItem
+	remote.SharepointIDs = &api.SharepointIDs{SiteID: "another-site"}
+	shared.RemoteItem = &remote
+	assert.False(t, isPersonalVault(&shared))
+
+	folder := api.Item{Name: "Documents", Folder: &api.FolderFacet{}, ParentReference: vault.ParentReference}
+	assert.False(t, isPersonalVault(&folder))
 }

@@ -1383,6 +1383,11 @@ A normal listing reports the error for that folder and carries on, so
 the rest of the drive is still listed, and excluding the folder (for
 example with `--exclude "/Personal Vault/**"`) avoids the error.
 
+Syncative's fork leaves the Personal Vault out of listings: it is the
+shortcut that points into the account's own site (`sharepointIds.siteId`
+equal to the `siteId` of its parent), whatever the account's language
+names it.
+
 A recursive listing with `--fast-list` stops at the first error, so
 listing the root of a drive which has one of these shortcuts in it
 will fail. Filters don't help here as the folder is listed by the

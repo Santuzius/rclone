@@ -102,6 +102,7 @@ type ItemReference struct {
 	ID        string `json:"id"`        // Unique identifier for the item.	Read/Write.
 	Path      string `json:"path"`      // Path that used to navigate to the item.	Read/Write.
 	DriveType string `json:"driveType"` // Type of the drive,	Read-Only
+	SiteID    string `json:"siteId"`    // Identifier of the site that contains the item. Read-only.
 }
 
 // GetID returns a normalized ID of the item
@@ -129,6 +130,12 @@ type RemoteItemFacet struct {
 	ParentReference      *ItemReference       `json:"parentReference"`      // Parent information, if the item has a parent. Read-write.
 	Size                 int64                `json:"size"`                 // Size of the item in bytes. Read-only.
 	WebURL               string               `json:"webUrl"`               // URL that displays the resource in the browser. Read-only.
+	SharepointIDs        *SharepointIDs       `json:"sharepointIds"`        // SharePoint identifiers of the remote item. Read-only.
+}
+
+// SharepointIDs groups the SharePoint identifiers of an item
+type SharepointIDs struct {
+	SiteID string `json:"siteId"` // Identifier of the site that contains the item.
 }
 
 // FolderFacet groups folder-related data on OneDrive into a single structure
